@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIGMA SCHOLA - SIAKAD & LMS</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .fade-in { animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen flex flex-col antialiased">
+
+    <!-- Container Utama Aplikasi -->
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- Rendered Dynamic Content -->
+    </div>
+
+    <!-- Firebase SDK (Modular App, Auth, Database) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getDatabase, ref, set, onValue, remove, push } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        // CONFIGURASI FIREBASE (Ganti dengan Konfigurasi Proyek Firebase Anda)
+        const firebaseConfig = {
+        apiKey: "AIzaSyAuP36kr9VpN76HHBFRUwWf0yl5yDa5rZg",
+        authDomain: "siakadsigma.firebaseapp.com",
+        databaseURL: "https://siakadsigma-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "siakadsigma",
+        storageBucket: "siakadsigma.firebasestorage.app",
+        messagingSenderId: "403945836114",
+        appId: "1:403945836114:web:dfcddf589f4fb10e7f198b",
+        measurementId: "G-3FWLZ00736"
+    };
+
+        // Inisialisasi Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase(app);
+        const googleProvider = new GoogleAuthProvider();
+
+        // STATE APLIKASI
+        window.AppState = {
+            currentUser: null, // { uid, name, email, role }
+            activeFilter: "SEMUA",
+            students: [],
+            sppBills: [],
+            exams: []
+        };
+
+        // REALTIME DATABASE LISTENERS
+        function initDatabaseListeners() {
+            // Listener Data Murid
+            onValue(ref(db, 'students'), (snapshot) => {
+                const data = snapshot.val();
+                window.AppState.students = data ? Object.keys(data).map(key => ({ id: key, ...data[key] })) : [];
+                if (window.AppState.currentUser) router.refreshCurrentPage();
+            });
+
+            // Listener Data Ujian
+            onValue(ref(db, 'exams'), (snapshot) => {
+                const data = snapshot.val();
+                window.AppState.exams = data ? Object.keys(data).map(key => ({ id: key, ...data[key] })) : [];
+                if (window.AppState.currentUser) router.refreshCurrentPage();
+            });
+
+            // Listener Data SPP
+            onValue(ref(db, 'sppBills'), (snapshot) => {
+                const data = snapshot.val();
+                window.AppState.sppBills = data ? Object.keys(data).map(key => ({ id: key, ...data[key] })) : [];
+                if (window.AppState.currentUser) router.refreshCurrentPage();
+            });
+        }
+
+        // AUTH LISTENERS & LOGIC
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                const isStudent = !user.email.includes("admin");
+                window.AppState.currentUser = {
+                    uid: user.uid,
+                    name: user.displayName || user.email.split('@')[0],
+                    email: user.email,
+                    role: isStudent ? "siswa" : "admin"
+                };
+                initDatabaseListeners();
+                router.renderLayout();
+                router.navigate(isStudent ? 'siakad' : 'dashboard');
+            } else {
+                window.AppState.currentUser = null;
+                document.getElementById('app').innerHTML = LoginComponent.render();
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }
+        });
+
+        window.Auth = {
+            loginWithGoogle: async function() {
+                try {
+                    await signInWithPopup(auth, googleProvider);
+                } catch (error) {
+                    alert("Gagal melakukan login Gmail: " + error.message);
+                }
+            },
+            loginAdminDemo: function() {
+                window.AppState.currentUser = {
+                    uid: "admin_demo_uid",
+                    name: "Administrator (Demo)",
+                    email: "admin@sigmaschola.sch.id",
+                    role: "admin"
+                };
+                initDatabaseListeners();
+                router.renderLayout();
+                router.navigate('dashboard');
+            },
+            logout: async function() {
+                if (auth.currentUser) {
+                    await signOut(auth);
+                } else {
+                    window.AppState.currentUser = null;
+                    document.getElementById('app').innerHTML = LoginComponent.render();
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                }
+            }
+        };
+
+        // FIREBASE DATABASE OPERATIONS
+        window.FirebaseDb = {
+            addStudent: function(student) {
+                const newRef = push(ref(db, 'students'));
+                set(newRef, student);
+            },
+            deleteStudent: function(id) {
+                remove(ref(db, `students/${id}`));
+            },
+            addExam: function(exam) {
+                const newRef = push(ref(db, 'exams'));
+                set(newRef, exam);
+            },
+            deleteExam: function(id) {
+                remove(ref(db, `exams/${id}`));
+            },
+            updateSppStatus: function(id, newStatus, dateStr) {
+                set(ref(db, `sppBills/${id}/status`), newStatus);
+                set(ref(db, `sppBills/${id}/tanggal`), dateStr);
+            },
+            addSppBill: function(bill) {
+                const newRef = push(ref(db, 'sppBills'));
+                set(newRef, bill);
+            }
+        };
+
+        // 2. AUTH COMPONENT (LOGIN / REGISTER WITH GMAIL)
+        const LoginComponent = {
+            render: function() {
+                return `
+                    <div class="min-h-screen bg-slate-100 flex items-center justify-center p-4 fade-in">
+                        <div class="max-w-md w-full bg-white rounded-3xl shadow-xl border border-slate-200/80 p-8 space-y-6">
+                            <div class="text-center space-y-2">
+                                <div class="inline-flex p-3 bg-sky-600 rounded-2xl shadow-lg shadow-sky-600/30 text-white mb-2">
+                                    <i data-lucide="graduation-cap" class="w-8 h-8"></i>
+                                </div>
+                                <h1 class="text-2xl font-black text-slate-800 tracking-tight">SIGMA SCHOLA</h1>
+                                <p class="text-xs text-slate-500 font-medium">Portal Akademik & LMS Terpadu</p>
+                            </div>
+
+                            <div class="space-y-3 pt-2">
+                                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider text-center">Pendaftaran & Login Siswa</label>
+                                <button onclick="Auth.loginWithGoogle()" class="w-full bg-white hover:bg-slate-50 text-slate-700 font-bold py-3 px-4 rounded-xl text-sm transition-all border border-slate-300 shadow-sm flex items-center justify-center gap-3 active:scale-95">
+                                    <svg class="w-5 h-5" viewBox="0 0 24 24">
+                                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                                    </svg>
+                                    Daftar / Masuk dengan Gmail
+                                </button>
+
+                                <div class="relative my-4">
+                                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div>
+                                    <div class="relative flex justify-center text-xs uppercase"><span class="bg-white px-2 text-slate-400 font-bold">Atau Akses Staff</span></div>
+                                </div>
+
+                                <button onclick="Auth.loginAdminDemo()" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 px-4 rounded-xl text-sm transition-all shadow-md active:scale-95 flex items-center justify-center gap-2">
+                                    <i data-lucide="shield-check" class="w-4 h-4"></i> Masuk Sebagai ADMIN
+                                </button>
+                            </div>
+
+                            <div class="text-center pt-4 border-t border-slate-100">
+                                <p class="text-[11px] text-slate-400">SIGMA EDTECH System &copy; 2026</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+
+        // 3. COMPONENTS
+        const DashboardComponent = {
+            render: function() {
+                return `
+                    <div class="space-y-6 fade-in">
+                        <div class="border-b border-slate-100 pb-4">
+                            <h2 class="text-2xl font-bold text-slate-800">Selamat Datang, ${window.AppState.currentUser.name} 👋</h2>
+                            <p class="text-slate-500 text-sm mt-0.5">Ringkasan aktivitas akademik dan manajemen sekolah hari ini.</p>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div class="p-5 bg-gradient-to-br from-sky-50 to-blue-50/30 border border-sky-100 rounded-2xl">
+                                <div class="flex justify-between items-start">
+                                    <div>
+                                        <span class="text-xs font-bold text-sky-600 uppercase tracking-wider">Total Murid</span>
+                                        <p class="text-2xl font-black text-slate-800 mt-1">${window.AppState.students.length} Siswa</p>
+                                    </div>
+                                    <div class="bg-sky-500/10 p-2.5 rounded-xl text-sky-600"><i data-lucide="users" class="w-5 h-5"></i></div>
+                                </div>
+                            </div>
+
+                            <div class="p-5 bg-gradient-to-br from-emerald-50 to-teal-50/30 border border-emerald-100 rounded-2xl">
+                                <div class="flex justify-between items-start">
+                                    <div>
+                                        <span class="text-xs font-bold text-emerald-600 uppercase tracking-wider">Tagihan SPP</span>
+                                        <p class="text-lg font-extrabold text-slate-800 mt-1">${window.AppState.sppBills.length} Bulan Data</p>
+                                    </div>
+                                    <div class="bg-emerald-500/10 p-2.5 rounded-xl text-emerald-600"><i data-lucide="check-circle-2" class="w-5 h-5"></i></div>
+                                </div>
+                            </div>
+
+                            <div class="p-5 bg-gradient-to-br from-amber-50 to-orange-50/30 border border-amber-100 rounded-2xl">
+                                <div class="flex justify-between items-start">
+                                    <div>
+                                        <span class="text-xs font-bold text-amber-600 uppercase tracking-wider">Ujian Tersedia</span>
+                                        <p class="text-2xl font-black text-slate-800 mt-1">${window.AppState.exams.length} Modul</p>
+                                    </div>
+                                    <div class="bg-amber-500/10 p-2.5 rounded-xl text-amber-600"><i data-lucide="file-clock" class="w-5 h-5"></i></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+
+        const MuridComponent = {
+            render: function() {
+                const rows = window.AppState.students.map((student, index) => `
+                    <tr class="border-b border-slate-100 hover:bg-slate-50/80 transition-colors">
+                        <td class="py-3.5 px-4 font-mono text-xs text-slate-500">${index + 1}</td>
+                        <td class="py-3.5 px-4 font-mono font-medium text-slate-700">${student.nisn}</td>
+                        <td class="py-3.5 px-4 font-bold text-slate-800">${student.nama}</td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2 py-0.5 text-xs font-extrabold rounded-md ${
+                                student.jenjang === 'SD' ? 'bg-red-100 text-red-700' :
+                                student.jenjang === 'SMP' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-800'
+                            }">${student.jenjang}</span>
+                        </td>
+                        <td class="py-3.5 px-4 text-slate-600 font-semibold">${student.kelas}</td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs font-bold bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200/60">${student.status}</span>
+                        </td>
+                        <td class="py-3.5 px-4 text-center">
+                            <button onclick="MuridComponent.deleteStudent('${student.id}')" class="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg border border-rose-200 transition-all" title="Hapus Murid">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                return `
+                    <div class="space-y-6 fade-in">
+                        <div class="border-b border-slate-100 pb-4">
+                            <h2 class="text-2xl font-bold text-slate-800">Manajemen Data Murid (Admin Only)</h2>
+                            <p class="text-slate-500 text-sm mt-0.5">Kelola pendaftaran dan direktori seluruh siswa sekolah di Firebase.</p>
+                        </div>
+
+                        <div class="p-5 bg-sky-50/50 border border-sky-100 rounded-2xl">
+                            <h3 class="font-bold text-slate-800 text-base mb-3 flex items-center gap-2">
+                                <i data-lucide="user-plus" class="w-4 h-4 text-sky-600"></i> Form Tambah Murid Baru
+                            </h3>
+                            <form onsubmit="MuridComponent.addStudent(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">NISN</label>
+                                    <input type="text" id="input-nisn" placeholder="0052918204" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap</label>
+                                    <input type="text" id="input-nama" placeholder="Nama Murid" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Jenjang</label>
+                                    <select id="input-jenjang" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                                        <option value="SD">SD</option>
+                                        <option value="SMP" selected>SMP</option>
+                                        <option value="SMA">SMA</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kelas</label>
+                                    <input type="text" id="input-kelas" placeholder="IX-A / XI-IPA" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                                </div>
+                                <div class="flex items-end">
+                                    <button type="submit" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-xl text-sm transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2">
+                                        <i data-lucide="plus" class="w-4 h-4"></i> Simpan
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse text-sm">
+                                    <thead class="bg-slate-50 border-b border-slate-200/80 text-slate-600 font-semibold">
+                                        <tr>
+                                            <th class="py-3.5 px-4">No</th>
+                                            <th class="py-3.5 px-4">NISN</th>
+                                            <th class="py-3.5 px-4">Nama Murid</th>
+                                            <th class="py-3.5 px-4">Jenjang</th>
+                                            <th class="py-3.5 px-4">Kelas</th>
+                                            <th class="py-3.5 px-4">Status</th>
+                                            <th class="py-3.5 px-4 text-center">Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        ${rows.length > 0 ? rows : `<tr><td colspan="7" class="py-6 text-center text-slate-400">Belum ada data murid di Firebase.</td></tr>`}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            },
+            addStudent: function(event) {
+                event.preventDefault();
+                window.FirebaseDb.addStudent({
+                    nisn: document.getElementById('input-nisn').value,
+                    nama: document.getElementById('input-nama').value,
+                    jenjang: document.getElementById('input-jenjang').value,
+                    kelas: document.getElementById('input-kelas').value,
+                    status: "Aktif"
+                });
+            },
+            deleteStudent: function(id) {
+                if (confirm("Apakah Anda yakin ingin menghapus data murid ini?")) {
+                    window.FirebaseDb.deleteStudent(id);
+                }
+            }
+        };
+
+        const SiakadComponent = {
+            render: function() {
+                const isAdmin = window.AppState.currentUser.role === 'admin';
+                const rows = window.AppState.sppBills.map((bill) => `
+                    <tr class="border-b border-slate-100 hover:bg-slate-50/80 transition-colors">
+                        <td class="py-3.5 px-4 font-semibold text-slate-700">${bill.bulan}</td>
+                        <td class="py-3.5 px-4 font-medium text-slate-600">${bill.nominal}</td>
+                        <td class="py-3.5 px-4">
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full ${
+                                bill.status === 'Lunas' 
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' 
+                                : 'bg-rose-50 text-rose-700 border border-rose-200/60'
+                            }">
+                                <span class="w-1.5 h-1.5 rounded-full ${bill.status === 'Lunas' ? 'bg-emerald-500' : 'bg-rose-500'}"></span>
+                                ${bill.status}
+                            </span>
+                        </td>
+                        <td class="py-3.5 px-4 text-slate-500 text-sm font-mono">${bill.tanggal}</td>
+                        ${isAdmin ? `
+                        <td class="py-3.5 px-4 text-center">
+                            <button onclick="SiakadComponent.togglePaymentStatus('${bill.id}', '${bill.status}')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs transition-all border border-slate-200">
+                                Ubah Status
+                            </button>
+                        </td>
+                        ` : ''}
+                    </tr>
+                `).join('');
+
+                return `
+                    <div class="space-y-6 fade-in">
+                        <div class="border-b border-slate-100 pb-4 flex justify-between items-center">
+                            <div>
+                                <h2 class="text-2xl font-bold text-slate-800">SIAKAD & Status Pembayaran SPP</h2>
+                                <p class="text-slate-500 text-sm mt-0.5">
+                                    ${isAdmin ? 'Edit dan kelola seluruh riwayat tagihan SPP siswa.' : 'Halaman status pembayaran SPP resmi siswa.'}
+                                </p>
+                            </div>
+                            ${isAdmin ? `
+                            <button onclick="SiakadComponent.addNewBill()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-all shadow-sm flex items-center gap-1.5">
+                                <i data-lucide="plus" class="w-4 h-4"></i> Tambah Tagihan
+                            </button>
+                            ` : ''}
+                        </div>
+
+                        <div class="border border-slate-200/80 rounded-2xl overflow-hidden shadow-sm">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse text-sm">
+                                    <thead class="bg-slate-50 border-b border-slate-200/80 text-slate-600 font-semibold">
+                                        <tr>
+                                            <th class="py-3.5 px-4">Bulan Tagihan</th>
+                                            <th class="py-3.5 px-4">Nominal</th>
+                                            <th class="py-3.5 px-4">Status</th>
+                                            <th class="py-3.5 px-4">Tanggal Pembayaran</th>
+                                            ${isAdmin ? `<th class="py-3.5 px-4 text-center">Aksi Admin</th>` : ''}
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        ${rows.length > 0 ? rows : `<tr><td colspan="${isAdmin ? 5 : 4}" class="py-6 text-center text-slate-400">Belum ada data tagihan SPP di Firebase.</td></tr>`}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            },
+            togglePaymentStatus: function(id, currentStatus) {
+                const isLunas = currentStatus === "Lunas";
+                const newStatus = isLunas ? "Belum Bayar" : "Lunas";
+                const now = new Date();
+                const dateStr = isLunas ? "-" : `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+                window.FirebaseDb.updateSppStatus(id, newStatus, dateStr);
+            },
+            addNewBill: function() {
+                const bulan = prompt("Masukkan Bulan Tagihan Baru (Contoh: November 2026):");
+                if (bulan) {
+                    window.FirebaseDb.addSppBill({
+                        bulan: bulan,
+                        nominal: "Rp 350.000",
+                        status: "Belum Bayar",
+                        tanggal: "-"
+                    });
+                }
+            }
+        };
+
+        const LmsComponent = {
+            render: function() {
+                const isAdmin = window.AppState.currentUser.role === 'admin';
+                const filteredExams = window.AppState.activeFilter === "SEMUA" 
+                    ? window.AppState.exams 
+                    : window.AppState.exams.filter(exam => exam.jenjang === window.AppState.activeFilter);
+
+                const cards = filteredExams.map(exam => `
+                    <div class="p-5 border border-slate-200/80 rounded-2xl flex flex-col justify-between hover:border-sky-300 hover:shadow-md transition-all bg-white group relative">
+                        <div>
+                            <div class="flex justify-between items-center mb-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-0.5 text-xs font-extrabold rounded-md ${
+                                        exam.jenjang === 'SD' ? 'bg-red-100 text-red-700' :
+                                        exam.jenjang === 'SMP' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-800'
+                                    }">${exam.jenjang}</span>
+                                    <span class="text-xs font-extrabold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-100">${exam.matpel}</span>
+                                </div>
+                                <span class="text-xs font-semibold text-slate-400 flex items-center gap-1">
+                                    <i data-lucide="clock" class="w-3.5 h-3.5"></i> ${exam.durasi}
+                                </span>
+                            </div>
+                            <h3 class="font-bold text-slate-800 text-base group-hover:text-sky-600 transition-colors">${exam.materi}</h3>
+                        </div>
+                        
+                        <div class="mt-5 pt-4 border-t border-slate-100 flex justify-between items-center">
+                            <span class="text-xs font-medium text-slate-500">Status: <strong class="text-amber-600">${exam.status}</strong></span>
+                            
+                            <div class="flex items-center gap-2">
+                                ${isAdmin ? `
+                                <button onclick="LmsComponent.deleteExam('${exam.id}')" class="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl border border-rose-200 transition-all" title="Hapus Ujian/Soal">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                                ` : ''}
+                                <button onclick="alert('Ujian dimulai!')" class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 active:scale-95">
+                                    Mulai Ujian <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                return `
+                    <div class="space-y-6 fade-in">
+                        <div class="border-b border-slate-100 pb-4">
+                            <h2 class="text-2xl font-bold text-slate-800">LMS Ujian & Tugas Online</h2>
+                            <p class="text-slate-500 text-sm mt-0.5">Modul ujian sekolah berdasarkan jenjang SD, SMP, dan SMA.</p>
+                        </div>
+
+                        ${isAdmin ? `
+                        <div class="p-5 bg-amber-50/50 border border-amber-200/80 rounded-2xl">
+                            <h3 class="font-bold text-slate-800 text-base mb-3 flex items-center gap-2">
+                                <i data-lucide="file-plus-2" class="w-4 h-4 text-amber-600"></i> Buat Modul Ujian / Soal Baru
+                            </h3>
+                            <form onsubmit="LmsComponent.addExam(event)" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Jenjang</label>
+                                    <select id="exam-jenjang" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                        <option value="SD">SD</option>
+                                        <option value="SMP" selected>SMP</option>
+                                        <option value="SMA">SMA</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Mata Pelajaran</label>
+                                    <input type="text" id="exam-matpel" placeholder="Contoh: Fisika" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Materi / Topik</label>
+                                    <input type="text" id="exam-materi" placeholder="Topik Ujian" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Durasi</label>
+                                    <input type="text" id="exam-durasi" placeholder="Contoh: 45 Menit" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                </div>
+                                <div class="flex items-end">
+                                    <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded-xl text-sm transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2">
+                                        <i data-lucide="plus-circle" class="w-4 h-4"></i> Tambah Ujian
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                        ` : ''}
+
+                        <div class="flex items-center gap-2 pb-2 border-b border-slate-100">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider mr-2 flex items-center gap-1">
+                                <i data-lucide="filter" class="w-3.5 h-3.5"></i> Filter Jenjang:
+                            </span>
+                            ${['SEMUA', 'SD', 'SMP', 'SMA'].map(filter => `
+                                <button onclick="LmsComponent.setFilter('${filter}')" class="px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                    window.AppState.activeFilter === filter 
+                                    ? 'bg-sky-600 text-white shadow-sm' 
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }">
+                                    ${filter}
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            ${cards.length > 0 ? cards : `<div class="col-span-2 py-8 text-center text-slate-400">Tidak ada ujian tersedia di Firebase.</div>`}
+                        </div>
+                    </div>
+                `;
+            },
+            setFilter: function(filter) {
+                window.AppState.activeFilter = filter;
+                router.navigate('lms');
+            },
+            addExam: function(event) {
+                event.preventDefault();
+                window.FirebaseDb.addExam({
+                    jenjang: document.getElementById('exam-jenjang').value,
+                    matpel: document.getElementById('exam-matpel').value,
+                    materi: document.getElementById('exam-materi').value,
+                    durasi: document.getElementById('exam-durasi').value,
+                    status: "Tersedia"
+                });
+            },
+            deleteExam: function(id) {
+                if (confirm("Apakah Anda yakin ingin menghapus ujian ini?")) {
+                    window.FirebaseDb.deleteExam(id);
+                }
+            }
+        };
+
+        window.MuridComponent = MuridComponent;
+        window.SiakadComponent = SiakadComponent;
+        window.LmsComponent = LmsComponent;
+
+        // 4. ROUTER & LAYOUT RENDERER
+        const router = {
+            currentPage: 'dashboard',
+            routes: {
+                'dashboard': DashboardComponent,
+                'murid': MuridComponent,
+                'siakad': SiakadComponent,
+                'lms': LmsComponent
+            },
+
+            renderLayout: function() {
+                const app = document.getElementById('app');
+                const user = window.AppState.currentUser;
+                const isAdmin = user.role === 'admin';
+
+                app.innerHTML = `
+                    <header class="bg-sky-600 text-white shadow-md sticky top-0 z-50">
+                        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex justify-between items-center">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-white/10 p-2 rounded-xl backdrop-blur-sm border border-white/20">
+                                    <i data-lucide="graduation-cap" class="w-6 h-6 text-white"></i>
+                                </div>
+                                <div>
+                                    <h1 class="font-extrabold text-lg tracking-wider text-white leading-none">SIGMA SCHOLA</h1>
+                                    <p class="text-[10px] text-sky-100 font-medium tracking-wide">ACADEMIC & LMS SYSTEM</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="hidden sm:flex flex-col text-right">
+                                    <span class="text-xs font-bold text-white">${user.name}</span>
+                                    <span class="text-[10px] text-sky-100 font-medium">${user.email}</span>
+                                </div>
+                                <button onclick="Auth.logout()" class="p-2 bg-sky-700 hover:bg-sky-800 text-white rounded-xl transition-all border border-sky-500/50" title="Keluar / Logout">
+                                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div class="flex-1 max-w-7xl w-full mx-auto grid grid-cols-1 md:grid-cols-12 gap-6 p-4 md:p-6">
+                        <aside class="md:col-span-3">
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 sticky top-20">
+                                <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-3">Navigasi ${isAdmin ? 'Admin' : 'Siswa'}</p>
+                                <nav class="space-y-1.5" id="main-nav">
+                                    ${isAdmin ? `
+                                    <button onclick="router.navigate('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all">
+                                        <i data-lucide="layout-dashboard" class="w-4 h-4"></i> Dashboard
+                                    </button>
+                                    <button onclick="router.navigate('murid')" id="nav-murid" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all">
+                                        <i data-lucide="users" class="w-4 h-4"></i> Data Murid
+                                    </button>
+                                    ` : ''}
+                                    <button onclick="router.navigate('siakad')" id="nav-siakad" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all">
+                                        <i data-lucide="receipt" class="w-4 h-4"></i> SIAKAD / SPP
+                                    </button>
+                                    <button onclick="router.navigate('lms')" id="nav-lms" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all">
+                                        <i data-lucide="book-open-check" class="w-4 h-4"></i> LMS Ujian
+                                    </button>
+                                </nav>
+                            </div>
+                        </aside>
+
+                        <main id="app-view" class="md:col-span-9 bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200/80 min-h-[500px]">
+                        </main>
+                    </div>
+                `;
+            },
+
+            navigate: function(page) {
+                if (!window.AppState.currentUser) return;
+                this.currentPage = page;
+
+                const viewContainer = document.getElementById('app-view');
+                if (!viewContainer) return;
+
+                const component = this.routes[page] || (window.AppState.currentUser.role === 'admin' ? this.routes['dashboard'] : this.routes['siakad']);
+                viewContainer.innerHTML = component.render();
+
+                document.querySelectorAll('#main-nav button').forEach(btn => {
+                    btn.className = 'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all text-slate-600 hover:bg-slate-50';
+                });
+
+                const activeNav = document.getElementById(`nav-${page}`);
+                if (activeNav) {
+                    activeNav.className = 'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all bg-sky-50 text-sky-600 border border-sky-100 shadow-sm';
+                }
+
+                setTimeout(() => {
+                    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                        lucide.createIcons();
+                    }
+                }, 10);
+            },
+
+            refreshCurrentPage: function() {
+                this.navigate(this.currentPage);
+            }
+        };
+
+        window.router = router;
+    </script>
+</body>
+</html>
